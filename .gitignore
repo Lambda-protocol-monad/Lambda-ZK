@@ -1,0 +1,55 @@
+# Node / tooling
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-lock.yaml
+package-lock.json
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Build / dist (if you later add frontend/backend)
+dist/
+build/
+.cache/
+
+# Circom build artifacts 
+circuits/build/*.wasm
+circuits/build/*_js/
+circuits/build/*.sym
+
+# Local / dev zkeys & vkeys that are NOT part of the official ceremony
+# (your real ceremony zkeys live under ceremony/output/, so we keep those)
+circuits/build/giftcard*.zkey
+circuits/build/giftcard*_verification_key.json
+
+# PTAU files (they're big and can be re-downloaded via scripts/CI)
+circuits/ptau/*.ptau
+
+# Ceremony logs (contain absolute paths - keep private)
+ceremony/scripts/*.log
+ceremony/scripts/ceremony_*.log
+ceremony/scripts/chain_verification_*.log
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+
+SECURITY_IMPLEMENTATION.md
+flow.md
+security_review.md
+TESTING_GUIDE.md
+test_concurrent_contributions.sh
+quick_test.sh
+tutorial.md
+discord.md
+DEPLOYMENT_SUMMARY.md
+AUTOMATED_FLOW.md
+admin-tutorial.md
+CEREMONY_SETUP.md
+DEPLOYMENT_CHECKLIST.md
+QUICK_SETUP.md

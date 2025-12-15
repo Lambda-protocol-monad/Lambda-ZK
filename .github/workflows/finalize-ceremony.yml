@@ -1,0 +1,389 @@
+name: Finalize Ceremony (Beacon)
+
+on:
+  workflow_dispatch:
+    inputs:
+      drand_round:
+        description: 'Precommitted drand round number (choose in advance; do NOT change after publishing)'
+        required: true
+        type: string
+  schedule:
+    # Run once a day at midnight UTC (as a safety net). It will no-op if already finalized.
+    - cron: '0 0 * * *'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Prevent multiple finalization workflows from running simultaneously
+# This ensures only one finalization can happen at a time
+concurrency:
+  group: ceremony-finalization
+  cancel-in-progress: false # Queue instead of canceling
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.finalize_status.outputs.HAS_CHANGES }}
+      pr_number: ${{ steps.create_pr.outputs.pull-request-number }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore PTAU from cache
+        uses: actions/cache@v4
+        with:
+          path: circuits/ptau/powersOfTau28_hez_final_18.ptau
+          key: ptau-${{ runner.os }}-powersOfTau28_hez_final_18-v1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install snarkjs (pinned)
+        run: |
+          npm install -g snarkjs@0.7.5
+          snarkjs --version || true
+
+      - name: Ensure PTAU file
+        shell: bash
+        run: |
+          set -euo pipefail
+          PTAU_PATH="circuits/ptau/powersOfTau28_hez_final_18.ptau"
+          mkdir -p circuits/ptau
+          if [ ! -f "$PTAU_PATH" ]; then
+            echo "PTAU not found in cache, downloading..."
+            curl -L "https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_18.ptau" -o "$PTAU_PATH"
+            echo "✅ PTAU downloaded"
+          else
+            echo "✅ PTAU restored from cache"
+          fi
+
+      - name: Determine drand round
+        id: drand
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -n "${{ github.event.inputs.drand_round || '' }}" ]; then
+            ROUND="${{ github.event.inputs.drand_round }}"
+            echo "Using workflow_dispatch drand_round: $ROUND"
+          elif [ -n "${{ vars.DRAND_ROUND || '' }}" ]; then
+            ROUND="${{ vars.DRAND_ROUND }}"
+            echo "Using repo variable DRAND_ROUND: $ROUND"
+          else
+            echo "❌ No drand round provided."
+            echo "   Provide it via manual dispatch input 'drand_round',"
+            echo "   or set a repo variable named DRAND_ROUND."
+            exit 1
+          fi
+
+          if ! [[ "$ROUND" =~ ^[0-9]+$ ]]; then
+            echo "❌ drand_round must be a number. Got: $ROUND"
+            exit 1
+          fi
+
+          echo "ROUND=$ROUND" >> "$GITHUB_OUTPUT"
+
+      - name: Install circom
+        shell: bash
+        run: |
+          set -euo pipefail
+          CIRCOM_VERSION=2.1.9
+          curl -L -o /tmp/circom-linux-amd64 "https://github.com/iden3/circom/releases/download/v${CIRCOM_VERSION}/circom-linux-amd64"
+          chmod +x /tmp/circom-linux-amd64
+          sudo mv /tmp/circom-linux-amd64 /usr/local/bin/circom
+          circom --version
+
+      - name: Compile circuit to R1CS
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p circuits/build
+          circom circuits/giftcard_merkle.circom --r1cs --wasm -o circuits/build
+          test -f circuits/build/giftcard_merkle.r1cs
+
+      - name: Install system deps (curl, jq)
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y curl jq
+          jq --version
+          curl --version
+
+      - name: Run final beacon script
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./ceremony/scripts/final_beacon.sh "${{ steps.drand.outputs.ROUND }}"
+
+      - name: Verify finalization artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "🔍 Verifying finalization artifacts..."
+
+          FINAL_ZKEY="ceremony/output/giftcard_merkle_final.zkey"
+          FINAL_VKEY="ceremony/output/giftcard_merkle_verification_key.json"
+
+          # Check if finalization already happened (idempotency)
+          if [ ! -f "$FINAL_ZKEY" ]; then
+            echo "ℹ️  Final zkey not generated (ceremony may already be finalized)"
+            exit 0
+          fi
+
+          echo "✅ Final zkey exists: $FINAL_ZKEY"
+
+          # Verify checksums were generated
+          if [ ! -f "$FINAL_ZKEY.sha256" ]; then
+            echo "❌ Missing checksum file: $FINAL_ZKEY.sha256"
+            exit 1
+          fi
+
+          if [ ! -f "$FINAL_VKEY" ]; then
+            echo "❌ Missing verification key: $FINAL_VKEY"
+            exit 1
+          fi
+
+          if [ ! -f "$FINAL_VKEY.sha256" ]; then
+            echo "❌ Missing checksum file: $FINAL_VKEY.sha256"
+            exit 1
+          fi
+
+          echo "✅ All finalization artifacts present"
+
+          # Verify file sizes are reasonable
+          ZKEY_SIZE=$(stat -c%s "$FINAL_ZKEY" 2>/dev/null || stat -f%z "$FINAL_ZKEY" 2>/dev/null)
+          if [ "$ZKEY_SIZE" -lt 100000 ]; then
+            echo "❌ Final zkey suspiciously small: $ZKEY_SIZE bytes"
+            exit 1
+          fi
+
+          echo "✅ Final zkey size: $ZKEY_SIZE bytes"
+          echo "✅ Finalization verification complete"
+
+      - name: Check if finalization produced changes
+        id: finalize_status
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Check if finalization produced new files (use git status for untracked files)
+          if [ -z "$(git status --porcelain ceremony/output/giftcard_merkle_final.zkey ceremony/output/giftcard_merkle_verification_key.json 2>/dev/null)" ]; then
+            echo "ℹ️  No changes detected (ceremony already finalized)"
+            echo "HAS_CHANGES=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "✅ Finalization artifacts detected"
+          echo "HAS_CHANGES=true" >> "$GITHUB_OUTPUT"
+
+      - name: Create Pull Request for ceremony finalization
+        id: create_pr
+        if: steps.finalize_status.outputs.HAS_CHANGES == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: |
+            [CEREMONY] Finalize with public randomness beacon
+
+            🎯 Drand Round: ${{ steps.drand.outputs.ROUND }}
+            🔐 Beacon Source: https://api.drand.sh/public/${{ steps.drand.outputs.ROUND }}
+            ⚡ Auto-generated by Lambda-ZK Ceremony Finalization
+
+            Final artifacts:
+            - ceremony/output/giftcard_merkle_final.zkey
+            - ceremony/output/giftcard_merkle_verification_key.json
+
+            The ceremony is now complete and production-ready.
+            Toxic waste has been eliminated via public randomness beacon.
+          branch: ceremony-finalize-${{ github.run_id }}
+          delete-branch: true
+          title: '[CEREMONY] Finalize with drand beacon (round ${{ steps.drand.outputs.ROUND }})'
+          body: |
+            ## 🎯 Ceremony Finalization
+
+            This PR finalizes the trusted setup ceremony using public randomness from drand.
+
+            ### Finalization Details
+            - **Drand Round**: `${{ steps.drand.outputs.ROUND }}`
+            - **Beacon Source**: https://api.drand.sh/public/${{ steps.drand.outputs.ROUND }}
+            - **Workflow Run**: [#${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            ### Final Artifacts Generated
+            - ✅ `ceremony/output/giftcard_merkle_final.zkey` - Production proving key
+            - ✅ `ceremony/output/giftcard_merkle_final.zkey.sha256` - Checksum
+            - ✅ `ceremony/output/giftcard_merkle_verification_key.json` - Verification key
+            - ✅ `ceremony/output/giftcard_merkle_verification_key.json.sha256` - Checksum
+
+            ### Verification Steps Completed
+            1. ✅ Public randomness fetched from drand
+            2. ✅ Beacon hash derived via SHA-256
+            3. ✅ Applied to ceremony chain via `snarkjs zkey beacon`
+            4. ✅ Final zkey verified against R1CS and PTAU
+            5. ✅ Verification key exported
+            6. ✅ SHA-256 checksums generated
+
+            ### Security Properties
+            - **Toxic Waste Elimination**: ✅ COMPLETE
+            - **Public Randomness**: Verifiable via drand API
+            - **Adversarial Security**: Maintained throughout ceremony
+            - **Production Ready**: ✅ Final keys are secure for production use
+
+            ### Review Checklist
+            - [ ] Verify drand round matches expected precommitment
+            - [ ] Confirm randomness is publicly verifiable on drand
+            - [ ] Check final artifact checksums
+            - [ ] Verify no unexpected files modified
+
+            ### Next Steps
+            1. **Review** the finalization artifacts
+            2. **Verify** drand randomness independently: `curl https://api.drand.sh/public/${{ steps.drand.outputs.ROUND }}`
+            3. **Approve and merge** to complete the ceremony
+            4. **Announce** ceremony completion to community
+
+            ---
+            🎉 **The ceremony is complete!** Merging this PR marks the official end of the trusted setup.
+
+            The final proving and verification keys are now production-ready for the giftcard_merkle circuit.
+          labels: |
+            ceremony
+            finalization
+            critical
+            automated
+          add-paths: |
+            ceremony/output/giftcard_merkle_final.zkey
+            ceremony/output/giftcard_merkle_final.zkey.sha256
+            ceremony/output/giftcard_merkle_verification_key.json
+            ceremony/output/giftcard_merkle_verification_key.json.sha256
+
+      - name: Post PR creation comment
+        if: steps.create_pr.outputs.pull-request-number
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ steps.create_pr.outputs.pull-request-number }},
+              body: `✅ **Ceremony finalization PR created**
+
+            **Drand Round:** ${{ steps.drand.outputs.ROUND }}
+            **Beacon Source:** https://api.drand.sh/public/${{ steps.drand.outputs.ROUND }}
+
+            This PR will be automatically merged to complete the ceremony.
+
+            ---
+            🤖 Automated finalization by Lambda-ZK Ceremony`
+            });
+
+  merge:
+    runs-on: ubuntu-latest
+    needs: finalize
+    if: needs.finalize.outputs.has_changes == 'true'
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Merge finalization PR
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.BYPASS_TOKEN }}
+          script: |
+            const prNumber = ${{ needs.finalize.outputs.pr_number }};
+
+            console.log(`✅ Finalization validation passed - merging PR #${prNumber}`);
+
+            // Post a comment explaining the merge
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: `✅ **Ceremony finalization validated and merged**
+
+            **Validation Summary:**
+            - ✅ Drand randomness fetched and verified
+            - ✅ Beacon hash applied to ceremony chain
+            - ✅ Final zkey verified against R1CS and PTAU
+            - ✅ Verification key exported
+            - ✅ SHA-256 checksums generated
+
+            **Status:**
+            Automatically merging to complete the ceremony...
+
+            ---
+            🤖 Automated merge by Lambda-ZK Ceremony`
+            });
+
+            // Merge the PR using BYPASS_TOKEN (bypasses branch protection)
+            console.log('🔀 Merging PR...');
+
+            try {
+              const mergeResult = await github.rest.pulls.merge({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+                merge_method: 'squash',
+                commit_title: `[CEREMONY] Finalize with drand beacon (#${prNumber})`,
+                commit_message: `✅ Ceremony finalization complete
+
+            Automated merge by Lambda-ZK Ceremony
+
+            Validation Summary:
+            - Drand randomness: VERIFIED
+            - Beacon hash application: PASSED
+            - Final zkey verification: PASSED
+            - Verification key export: PASSED
+            - Checksums: GENERATED
+
+            Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`
+              });
+
+              console.log('✅ PR merged successfully');
+              console.log(`   SHA: ${mergeResult.data.sha}`);
+              console.log(`   Merged: ${mergeResult.data.merged}`);
+
+              // Delete the branch
+              try {
+                const branchName = `ceremony-finalize-${{ github.run_id }}`;
+                await github.rest.git.deleteRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `heads/${branchName}`
+                });
+                console.log('✅ Branch deleted');
+              } catch (deleteError) {
+                console.log('ℹ️  Could not delete branch:', deleteError.message);
+              }
+
+            } catch (mergeError) {
+              console.error('❌ Failed to merge PR:', mergeError.message);
+
+              // Post a comment about the merge failure
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `⚠️ **Automatic merge failed**
+
+            The ceremony finalization has been **validated** and passed all checks, but automatic merge failed.
+
+            **Error:** ${mergeError.message}
+
+            **Action Required:**
+            A repository maintainer needs to manually merge this PR.
+
+            ---
+            🤖 Automated validation by Lambda-ZK Ceremony`
+              });
+
+              throw mergeError; // Fail the workflow
+            }

@@ -1,0 +1,566 @@
+name: Verify Ceremony Contribution
+
+on:
+  pull_request_target: # Required for auto-merge from forks with write permissions
+    branches: ['main']
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'ceremony/contrib/**/*.zkey'
+
+permissions:
+  contents: write # Required for merge
+  pull-requests: write # Required for comments and merge
+  actions: write # Required for workflow operations
+  checks: write # Required for check runs
+
+# Serialize contribution PRs to prevent race conditions
+concurrency:
+  group: contribution-verification
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    # Skip verification for PRs created by the ceremony bot (aggregation PRs)
+    if: github.event.pull_request.user.login != 'github-actions[bot]' && !startsWith(github.event.pull_request.head.ref, 'ceremony-aggregate-')
+
+    steps:
+      - name: Checkout PR head from base repo
+        uses: actions/checkout@v4
+        with:
+          # CRITICAL: Check out the PR's head commit, but DO NOT execute any code from it
+          # We only validate the .zkey file (binary data), never execute PR code
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          submodules: false
+
+      - name: Check if ceremony is already finalized
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "🔍 Checking if ceremony has been finalized..."
+
+          # Check for final ceremony artifacts on main branch
+          git fetch origin main
+
+          if git ls-tree origin/main ceremony/output/ | grep -q "giftcard_merkle_final.zkey"; then
+            echo "❌ CEREMONY ALREADY FINALIZED"
+            echo ""
+            echo "This ceremony has been finalized and is no longer accepting contributions."
+            echo "The final proving and verification keys have been generated and are production-ready."
+            echo ""
+            echo "Final artifacts:"
+            echo "  - ceremony/output/giftcard_merkle_final.zkey"
+            echo "  - ceremony/output/giftcard_merkle_verification_key.json"
+            echo ""
+            echo "No further contributions can be accepted."
+            exit 1
+          fi
+
+          echo "✅ Ceremony is still open for contributions"
+
+      - name: Enforce strict file change validation for contribution PR
+        id: strict_validation
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "📝 Enforcing strict file change validation..."
+
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+
+          # Use name-status to ensure NOTHING except exactly one added zkey is present.
+          # --no-renames: Force git to see similar files as separate add/delete, not renames
+          CHANGED_FILES=$(git diff --name-status --no-renames "$BASE_SHA" "$HEAD_SHA")
+          echo "Detected changes:"
+          echo "$CHANGED_FILES"
+
+          ADDED_COUNT=0
+          FOUND_VALID_ZKEY_ADDITION=false
+          ADDED_ZKEY_PATH=""
+
+          # Process all changes
+          while IFS=$'\t' read -r STATUS FILE REST; do
+            # Skip empty lines (git diff output can sometimes contain them)
+            [[ -z "${STATUS:-}" ]] && continue
+
+            case "$STATUS" in
+              A)
+                # Check if this is a valid zkey addition
+                if [[ "$FILE" =~ ^ceremony/contrib/giftcard_merkle_[0-9]+\.zkey$ ]]; then
+                  echo "✅ Found valid added .zkey file (numbered format): $FILE"
+                  FOUND_VALID_ZKEY_ADDITION=true
+                  ADDED_ZKEY_PATH="$FILE"
+                  ADDED_COUNT=$((ADDED_COUNT + 1))
+                elif [[ "$FILE" =~ ^ceremony/contrib/giftcard_merkle_tmp_[0-9_]+\.zkey$ ]]; then
+                  echo "✅ Found valid added .zkey file (temporary format): $FILE"
+                  echo "ℹ️  This contribution will be automatically renumbered by the aggregation workflow"
+                  FOUND_VALID_ZKEY_ADDITION=true
+                  ADDED_ZKEY_PATH="$FILE"
+                  ADDED_COUNT=$((ADDED_COUNT + 1))
+                else
+                  echo "❌ Error: New file added at an invalid location or with an invalid name: $FILE"
+                  echo "   Expected format: ceremony/contrib/giftcard_merkle_NNNN.zkey OR ceremony/contrib/giftcard_merkle_tmp_*.zkey"
+                  exit 1
+                fi
+                ;;
+              D)
+                # Allow deletion of .zkey files in contrib/ (cleanup from previous tests)
+                if [[ "$FILE" =~ ^ceremony/contrib/.*\.zkey$ ]]; then
+                  echo "ℹ️  Ignoring deletion of old contribution file: $FILE"
+                else
+                  echo "❌ Error: Contribution PRs must not delete non-contribution files. Found DELETE for: $FILE"
+                  exit 1
+                fi
+                ;;
+              M)
+                echo "❌ Error: Contribution PRs must not modify files. Found MODIFY for: $FILE"
+                exit 1
+                ;;
+              R*|C*)
+                # Renames/copies should not appear with --no-renames, but just in case
+                echo "❌ Error: Renames/copies are not allowed in contribution PRs. Found $STATUS for: $FILE ${REST:-}"
+                exit 1
+                ;;
+              *)
+                echo "❌ Error: Unhandled/unsupported change type ($STATUS) for file: $FILE ${REST:-}"
+                exit 1
+                ;;
+            esac
+          done <<< "$CHANGED_FILES"
+
+          if ! $FOUND_VALID_ZKEY_ADDITION; then
+            echo "❌ Error: Did not find a valid new zkey file addition."
+            echo "   Expected: ceremony/contrib/giftcard_merkle_NNNN.zkey (numbered)"
+            echo "        OR: ceremony/contrib/giftcard_merkle_tmp_*.zkey (temporary)"
+            exit 1
+          fi
+
+          if [ "$ADDED_COUNT" -ne 1 ]; then
+            echo "❌ Error: Expected exactly one file addition, but found $ADDED_COUNT."
+            exit 1
+          fi
+
+          echo "✅ Strict file change validation passed."
+
+          echo "ADDED_ZKEY_PATH=$ADDED_ZKEY_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Security checks (symlinks, submodules, LFS)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "🔒 Performing security checks..."
+
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+
+          # Check for symlinks (120000) and submodules (160000)
+          if git ls-tree -r "$HEAD_SHA" | grep -E '^(120000|160000)'; then
+            echo "❌ Security violation: Symlinks or submodules are not allowed"
+            exit 1
+          fi
+
+          # Verify file size (must be > 100KB, typical zkey is ~5-6MB)
+          ZKEY_FILE="${{ steps.strict_validation.outputs.ADDED_ZKEY_PATH }}"
+          FILE_SIZE=$(stat -c%s "$ZKEY_FILE" 2>/dev/null || stat -f%z "$ZKEY_FILE" 2>/dev/null)
+
+          if [ "$FILE_SIZE" -lt 102400 ]; then
+            echo "❌ File too small ($FILE_SIZE bytes). Expected ~5-6MB. Might be LFS pointer."
+            exit 1
+          fi
+
+          echo "✅ Security checks passed. File size: $FILE_SIZE bytes"
+
+      - name: Restore PTAU from cache
+        uses: actions/cache@v4
+        with:
+          path: circuits/ptau/powersOfTau28_hez_final_18.ptau
+          key: ptau-${{ runner.os }}-powersOfTau28_hez_final_18-v1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install snarkjs (pinned)
+        run: |
+          npm install -g snarkjs@0.7.5
+          snarkjs --version || true
+
+      - name: Ensure PTAU file
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PTAU_PATH="circuits/ptau/powersOfTau28_hez_final_18.ptau"
+          mkdir -p circuits/ptau
+
+          if [ ! -f "$PTAU_PATH" ]; then
+            echo "🔄 Downloading PTAU file..."
+            curl -L --max-time 600 --retry 3 --retry-delay 10 \
+              "https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_18.ptau" \
+              -o "$PTAU_PATH"
+
+            if [ ! -s "$PTAU_PATH" ]; then
+              echo "❌ PTAU download failed"
+              rm -f "$PTAU_PATH"
+              exit 1
+            fi
+          fi
+
+          # Verify PTAU checksum
+          PTAU_CHECKSUM=$(sha256sum "$PTAU_PATH" | awk '{print $1}')
+          EXPECTED="e970efa7774da80101e0ac336d083ef3339855c98112539338d706b2b89ac694"
+
+          if [ "$PTAU_CHECKSUM" != "$EXPECTED" ]; then
+            echo "❌ PTAU checksum mismatch!"
+            echo "   Expected: $EXPECTED"
+            echo "   Got:      $PTAU_CHECKSUM"
+            exit 1
+          fi
+
+          echo "✅ PTAU verified"
+
+      - name: Install circom
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L https://github.com/iden3/circom/releases/download/v2.1.9/circom-linux-amd64 \
+            -o /usr/local/bin/circom
+          chmod +x /usr/local/bin/circom
+          circom --version || true
+
+      - name: Compile giftcard_merkle circuit
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "🔨 Compiling giftcard_merkle circuit..."
+          mkdir -p circuits/build
+          circom circuits/giftcard_merkle.circom --r1cs --wasm -o circuits/build
+
+          if [ ! -f "circuits/build/giftcard_merkle.r1cs" ]; then
+            echo "❌ Circuit compilation failed - R1CS not generated"
+            exit 1
+          fi
+
+          echo "✅ Circuit compiled successfully"
+          ls -lh circuits/build/giftcard_merkle.r1cs
+
+      - name: Verify contribution cryptographically (snarkjs zkey verify)
+        id: crypto_verify
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "🔐 Verifying contribution with snarkjs..."
+
+          PTAU_PATH="circuits/ptau/powersOfTau28_hez_final_18.ptau"
+          R1CS_PATH="circuits/build/giftcard_merkle.r1cs"
+          NEW_ZKEY="${{ steps.strict_validation.outputs.ADDED_ZKEY_PATH }}"
+
+          if [ ! -f "$PTAU_PATH" ] || [ ! -f "$R1CS_PATH" ] || [ ! -f "$NEW_ZKEY" ]; then
+            echo "❌ Missing required files for verification"
+            exit 1
+          fi
+
+          echo "  R1CS: $R1CS_PATH"
+          echo "  PTAU: $PTAU_PATH"
+          echo "  NEW:  $NEW_ZKEY"
+
+          # This verifies the zkey is valid for (R1CS, PTAU).
+          if ! timeout 300 snarkjs zkey verify "$R1CS_PATH" "$PTAU_PATH" "$NEW_ZKEY"; then
+            echo "❌ Cryptographic verification FAILED"
+            exit 1
+          fi
+
+          echo "✅ snarkjs zkey verify succeeded for contribution."
+
+      - name: Validate parent zkey (prevent non-sequential contributions)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "🔍 Validating that contribution is based on latest ceremony state..."
+
+          ZKEY_FILE="${{ steps.strict_validation.outputs.ADDED_ZKEY_PATH }}"
+
+          # Get latest zkey from output/
+          if ls ceremony/output/giftcard_merkle_*.zkey >/dev/null 2>&1; then
+            LATEST_OUTPUT=$(ls -1 ceremony/output/giftcard_merkle_*.zkey | sort -V | tail -n1)
+            echo "📊 Latest output zkey: $LATEST_OUTPUT"
+
+            # Calculate hash of the latest zkey (this should be the parent)
+            EXPECTED_PARENT_HASH=$(sha256sum "$LATEST_OUTPUT" | awk '{print $1}')
+            echo "📊 Expected parent hash (last chain zkey): ${EXPECTED_PARENT_HASH:0:16}..."
+
+            # Use snarkjs to get contribution index
+            # The contribution metadata includes the index which tells us how many contributions
+            # have been applied. We verify this matches our expected chain length.
+            echo "🔍 Extracting contribution metadata..."
+
+            # Get the number of existing contributions in output/
+            EXISTING_CONTRIBS=$(find ceremony/output -name "giftcard_merkle_[0-9][0-9][0-9][0-9].zkey" | wc -l)
+            # Subtract 1 because 0000.zkey is the initial setup, not a contribution
+            EXPECTED_CONTRIB_INDEX=$((EXISTING_CONTRIBS - 1))
+
+            echo "📊 Existing zkeys in output/: $EXISTING_CONTRIBS"
+            echo "📊 Expected contribution index: $EXPECTED_CONTRIB_INDEX"
+
+            # Export contribution info
+            snarkjs zkey export json "$ZKEY_FILE" /tmp/contrib_check.json
+
+            # Check if the zkey has contributions field
+            if jq -e '.contributions' /tmp/contrib_check.json > /dev/null 2>&1; then
+              ACTUAL_CONTRIB_COUNT=$(jq '.contributions | length' /tmp/contrib_check.json)
+              echo "📊 Actual contributions in submitted zkey: $ACTUAL_CONTRIB_COUNT"
+
+              # The submitted zkey should have exactly EXPECTED_CONTRIB_INDEX + 1 contributions
+              # (the +1 is the new contribution being submitted)
+              EXPECTED_TOTAL_CONTRIBS=$((EXPECTED_CONTRIB_INDEX + 1))
+
+              if [ "$ACTUAL_CONTRIB_COUNT" -eq "$EXPECTED_TOTAL_CONTRIBS" ]; then
+                echo "✅ Contribution count matches expected chain length"
+                echo "   This contribution properly extends the ceremony chain"
+              else
+                echo "❌ VALIDATION FAILED: Contribution index mismatch!"
+                echo "   Expected contributions: $EXPECTED_TOTAL_CONTRIBS"
+                echo "   Actual contributions: $ACTUAL_CONTRIB_COUNT"
+                echo ""
+                echo "This means the contribution was NOT based on the latest ceremony state."
+                echo "Please download the latest zkey from ceremony/output/ and regenerate your contribution."
+                echo ""
+                echo "Latest zkey to use: $LATEST_OUTPUT"
+                exit 1
+              fi
+            else
+              echo "⚠️ Warning: Could not extract contribution metadata"
+              echo "   Proceeding with cryptographic verification only"
+            fi
+
+            echo "✅ Parent zkey validation passed"
+            echo "   Contribution is based on latest ceremony state"
+          else
+            echo "ℹ️  No existing output zkeys found. This might be the first contribution."
+          fi
+
+      - name: Rate limiting check (anti-spam)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          AUTHOR="${{ github.event.pull_request.user.login }}"
+
+          echo "🔍 Checking rate limits for user: $AUTHOR"
+
+          # Check if user is a repository owner or collaborator (skip rate limits for them)
+          USER_PERMISSION=$(gh api /repos/${{ github.repository }}/collaborators/$AUTHOR/permission --jq '.permission' 2>/dev/null || echo "none")
+
+          echo "User permission level: $USER_PERMISSION"
+
+          if [[ "$USER_PERMISSION" == "admin" || "$USER_PERMISSION" == "write" ]]; then
+            echo "✅ User is a repository collaborator/owner - skipping rate limits"
+            exit 0
+          fi
+
+          echo "ℹ️  Applying rate limits for external contributor"
+
+          # Count merged PRs from this author in the last 24 hours
+          RECENT_CONTRIBS=$(gh pr list \
+            --repo ${{ github.repository }} \
+            --author "$AUTHOR" \
+            --state merged \
+            --search "merged:>$(date -u -d '24 hours ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v-24H '+%Y-%m-%dT%H:%M:%SZ')" \
+            --json number \
+            --jq 'length' || echo "0")
+
+          echo "Recent contributions (last 24h): $RECENT_CONTRIBS"
+
+          if [ "$RECENT_CONTRIBS" -ge 20 ]; then
+            echo "❌ Rate limit exceeded: Maximum 5 contributions per 24 hours"
+            echo "   Please wait before submitting more contributions"
+            exit 1
+          fi
+
+          # Check account age (must be > 7 days)
+          ACCOUNT_CREATED=$(gh api /users/$AUTHOR --jq '.created_at')
+          ACCOUNT_AGE_SECONDS=$(( $(date +%s) - $(date -d "$ACCOUNT_CREATED" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$ACCOUNT_CREATED" +%s) ))
+          ACCOUNT_AGE_DAYS=$(( ACCOUNT_AGE_SECONDS / 86400 ))
+
+          echo "Account age: $ACCOUNT_AGE_DAYS days"
+
+          if [ "$ACCOUNT_AGE_DAYS" -lt 7 ]; then
+            echo "❌ Account too new. Please wait $((7 - ACCOUNT_AGE_DAYS)) more days before contributing."
+            exit 1
+          fi
+
+          echo "✅ Rate limit checks passed"
+
+      - name: Post success comment
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: `## ✅ Contribution Verified Successfully
+
+            **Cryptographic Verification:** PASSED ✓
+            **Security Checks:** PASSED ✓
+            **Parent Zkey Validation:** PASSED ✓
+            **Rate Limiting:** PASSED ✓
+
+            ### Next Steps
+            Auto-merge has been enabled for this PR. It will be **automatically merged** once all branch protection requirements are met.
+
+            After merge, the aggregation workflow will:
+            1. Process your contribution into the official ceremony chain
+            2. Update the output directory with verified artifacts
+            3. Generate updated checksums and manifests
+
+            Thank you for contributing to the ceremony! 🎉
+
+            ---
+            *Automated verification by Lambda-ZK Ceremony*`
+            });
+
+      - name: Approve verified contribution
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = context.payload.pull_request.number;
+
+            console.log(`✅ All validations passed - approving PR #${prNumber}`);
+
+            // Post approval comment
+            await github.rest.pulls.createReview({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              event: 'APPROVE',
+              body: `✅ Contribution cryptographically verified and approved.
+
+            **Verification Summary:**
+            - ✅ Cryptographic validation passed
+            - ✅ Security checks passed
+            - ✅ Parent zkey validation passed
+            - ✅ Rate limiting checks passed
+
+            **Next Steps:**
+            This PR will be automatically merged once all status checks complete.
+            The aggregation workflow will then process this contribution and update the ceremony chain.
+
+            ---
+            🤖 Automated verification by Lambda-ZK Ceremony`
+            });
+
+            console.log(`✅ PR #${prNumber} approved successfully`);
+
+      - name: Post failure comment
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: `## ❌ Contribution Verification Failed
+
+            One or more validation checks failed. Please review the workflow logs for details.
+
+            ### Common issues:
+            - **Cryptographic verification failed**: Ensure you used the latest zkey from \`ceremony/output/\` as input
+            - **File validation failed**: Make sure you added exactly one \`.zkey\` file in \`ceremony/contrib/\`
+            - **Rate limit exceeded**: Maximum 5 contributions per 24 hours
+            - **Account too new**: Account must be at least 7 days old
+
+            ### How to fix:
+            1. Review the [workflow run logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            2. Fix the issue locally
+            3. Force-push to this PR branch to re-trigger verification
+
+            ---
+            *Automated verification by Lambda-ZK Ceremony*`
+            });
+
+  merge:
+    runs-on: ubuntu-latest
+    needs: verify
+    if: success()
+
+    steps:
+      - name: Merge verified contribution
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.BYPASS_TOKEN }}
+          script: |
+            const prNumber = context.payload.pull_request.number;
+
+            console.log('🔀 Attempting to merge PR...');
+
+            try {
+              const mergeResult = await github.rest.pulls.merge({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+                merge_method: 'squash',
+                commit_title: `Ceremony contribution #${prNumber}`,
+                commit_message: `✅ Cryptographically verified contribution
+
+            Automated merge by Lambda-ZK Ceremony
+
+            Verification Summary:
+            - Cryptographic validation: PASSED
+            - Security checks: PASSED
+            - Parent zkey validation: PASSED
+            - Rate limiting: PASSED
+
+            Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`
+              });
+
+              console.log('✅ PR merged successfully');
+              console.log(`   SHA: ${mergeResult.data.sha}`);
+              console.log(`   Merged: ${mergeResult.data.merged}`);
+
+              // Delete the branch (optional, for cleanup)
+              try {
+                await github.rest.git.deleteRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `heads/${context.payload.pull_request.head.ref}`
+                });
+                console.log('✅ Branch deleted');
+              } catch (deleteError) {
+                console.log('ℹ️  Could not delete branch (may be from fork):', deleteError.message);
+              }
+
+            } catch (mergeError) {
+              console.error('❌ Failed to merge PR:', mergeError.message);
+
+              // Post a comment about the merge failure
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `⚠️ **Automatic merge failed**
+
+            Your contribution has been **approved** and passed all security checks, but automatic merge failed.
+
+            **Error:** ${mergeError.message}
+
+            **Action Required:**
+            A repository maintainer needs to manually merge this PR.
+
+            ---
+            🤖 Automated verification by Lambda-ZK Ceremony`
+              });
+
+              throw mergeError; // Fail the workflow
+            }

@@ -1,0 +1,31 @@
+GNU GENERAL PUBLIC LICENSE
+
+Version 3, 29 June 2007
+
+Copyright (c) 2024–2025 Lambda-ZK Ceremony Contributors
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program. If not, see https://www.gnu.org/licenses/
+
+.
+
+Project Notice (Non-License Text)
+
+This software facilitates a trusted setup ceremony for zero-knowledge proofs.
+By using this software, you agree to participate in good faith and acknowledge
+that cryptographic security depends on the honest participation of at least
+one party in the multi-party computation ceremony.
+
+See README.md for detailed security properties and participation guidelines.
+This ceremony implementation follows security best practices established by
+the zero-knowledge cryptography community.
