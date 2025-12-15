@@ -4,8 +4,7 @@ on:
   # Run every 5 minutes to check for new contributions
   # For production, consider changing to hourly: '0 * * * *'
   schedule:
-    - cron: '*/5 * * * *'  # Every 5 minutes (testing)
-    # - cron: '0 * * * *'  # Every hour (production) - uncomment and comment above for production
+    - cron: '0 * * * *'  # Every hour (production) - uncomment and comment above for production
 
   # Keep push trigger for immediate testing when scripts/circuits change
   push:
