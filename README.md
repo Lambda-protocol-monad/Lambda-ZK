@@ -321,7 +321,7 @@ The GiftCardMerkle circuit enables:
 - Circom 2.x
 - circomlib (Poseidon, BabyJubJub, Comparators)
 - snarkjs 0.7.x
-- Phase 1 PTAU: Powers of Tau 28 (supports circuits up to 2^28 constraints)
+- Phase 1 PTAU: Powers of Tau 28 (supports circuits up to 2^18 constraints)
 
 ## License
 
