@@ -1,0 +1,42 @@
+2026-01-02 21:54:17 LOGGING: Comprehensive audit log enabled: ceremony_20260102_215417.log
+╔══════════════════════════════════════════════╗
+║      Lambda-ZK Enhanced Trusted Setup        ║
+║              Security Edition                ║
+╚══════════════════════════════════════════════╝
+2026-01-02 21:54:17 INIT: Lambda-ZK Enhanced Trusted Setup Coordinator  started
+2026-01-02 21:54:17 INIT: Security features enabled - maintaining adversarial resilience
+2026-01-02 21:54:17 CIRCUIT_OK: R1CS file verified: /home/crypto/defi/monad/test-zk-/circuits/build/giftcard_merkle.r1cs
+2026-01-02 21:54:17 SECURITY_OK: PTAU integrity verified: e970efa7774da80101e0ac336d083ef3339855c98112539338d706b2b89ac694
+2026-01-02 21:54:17 SETUP: Generating initial zkey with enhanced entropy validation
+[32;22m[INFO]  [39;1msnarkJS[0m: Reading r1cs
+[32;22m[INFO]  [39;1msnarkJS[0m: Reading tauG1
+[32;22m[INFO]  [39;1msnarkJS[0m: Reading tauG2
+[32;22m[INFO]  [39;1msnarkJS[0m: Reading alphatauG1
+[32;22m[INFO]  [39;1msnarkJS[0m: Reading betatauG1
+[32;22m[INFO]  [39;1msnarkJS[0m: Circuit hash: 
+		dfd8c6f4 9c5a6405 8a4b84c5 60686dfe
+		14a646d5 de2cca63 e451f39b 276f2467
+		aba28175 a73a4389 8b6737f2 38d6199b
+		291e8b2a 0e095ab2 8954a387 c3d1d69e
+2026-01-02 21:54:31 VALIDATION_INFO: Numbered file detected: giftcard_merkle_0000.zkey (will be renumbered to 0000 in output/)
+2026-01-02 21:54:31 VALIDATION: Running cryptographic verification for contribution #0
+2026-01-02 21:54:43 VALIDATION_SUCCESS: Contribution #0 cryptographically verified
+2026-01-02 21:54:43 SETUP_SUCCESS: Initial zkey generated and validated: /home/crypto/defi/monad/test-zk-/ceremony/output/giftcard_merkle_0000.zkey
+
+───────────────────────────────────────────────────────────────────────
+2026-01-02 21:54:43 PROCESSING: Scanning for contributions with deterministic ordering
+───────────────────────────────────────────────────────────────────────
+2026-01-02 21:54:43 SCAN_COMPLETE: Found 0 potential contribution files
+2026-01-02 21:54:43 INDEX_INFO: Highest existing index in output/: 0
+2026-01-02 21:54:43 INDEX_INFO: New contributions will start at index: 1
+
+───────────────────────────────────────────────────────────────────────
+PROCESSING COMPLETE - AUDIT SUMMARY
+───────────────────────────────────────────────────────────────────────
+2026-01-02 21:54:43 SUMMARY: Contributions processed: 0
+2026-01-02 21:54:43 SUMMARY: Contributions rejected: 0
+2026-01-02 21:54:43 SUMMARY: Total contributions found: 0
+2026-01-02 21:54:43 MANIFEST: Generating public checksum manifest
+2026-01-02 21:54:43 MANIFEST_SUCCESS: Generated manifest at /home/crypto/defi/monad/test-zk-/ceremony/output/checksum_manifest.txt
+2026-01-02 21:54:43 STATUS_INFO: No new contributions processed in this run
+2026-01-02 21:54:43 CI_SKIP: No changes to process - exiting cleanly to prevent loops

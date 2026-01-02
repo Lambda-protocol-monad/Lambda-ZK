@@ -31,8 +31,7 @@ circuits/ptau/*.ptau
 
 # Ceremony logs (contain absolute paths - keep private)
 ceremony/scripts/*.log
-ceremony/scripts/ceremony_*.log
-ceremony/scripts/chain_verification_*.log
+ceremony/logs/
 
 # OS junk
 .DS_Store

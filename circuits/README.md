@@ -1,283 +1,192 @@
-# 🐑 Lambda-ZK Gift Card Circuit
+🐑 LAMB ZK Gift Pool Zero-Knowledge Gift Cards – Private Token Gifting with Circom + Groth16
 
-**Advanced Zero-Knowledge Gift Card with Merkle Tree Privacy**
+Fully Production-Ready System + Secure Multi-Party Ceremony Guide
 
-This directory contains a production-ready Circom implementation of a privacy-preserving gift card protocol using Merkle tree commitments. This circuit powers the active Lambda-ZK trusted setup ceremony and enables secure, private token gifting with Tornado Cash-style anonymity guarantees.
+A privacy-preserving gifting system where:
 
-## 📦 Circuit Specification
+Sender locks LAMB tokens
 
-### **Main Circuit: `giftcard_merkle.circom`**
+Generates a secret → Poseidon hash → gift ticket
 
-**File**: [`giftcard_merkle.circom`](./giftcard_merkle.circom) - 95 lines
-**Circom Version**: 2.0.0
-**Tree Depth**: 32 levels (4.3 billion possible leaves)
-**Trust Model**: Multi-party computation ceremony with ≥1 honest participant
+Receiver redeems tokens using a zk-SNARK proof
 
-#### **Circuit Interface**
+Secret is never revealed on-chain
 
-```circom
-template GiftCardMerkle(depth) {
-    // Private inputs
-    signal input secret;               // Card secret
-    signal input salt;                 // Random salt for commitment
-    signal input amountDeposited;      // Original deposit amount
-    signal input amountRequested;      // Amount to withdraw now
-    signal input spentBefore;          // Previously spent amount
+Nullifier prevents double claims
 
-    signal input pathElements[depth];  // Merkle proof elements
-    signal input pathIndices[depth];   // Merkle proof indices
+Partial claims supported
 
-    // Public outputs
-    signal output root;                // Merkle root
-    signal output nullifierCurrent;    // Poseidon(secret, amountRequested)
-    signal output amount;              // amountRequested
-    signal output leafCommitment;      // Poseidon(secret, salt, amountDeposited)
-    signal output spentBefore_pub;     // spentBefore
-    signal output spentAfter_pub;      // spentBefore + amountRequested
-    signal output amountDeposited_pub; // amountDeposited
-}
-```
+🔥 Tornado-style privacy, but for gift cards and fully controlled + safe.
 
-## 🌟 Advanced Features
-
-### **🔗 Merkle Tree Commitment**
+📁 Project Structure
 
-- **Privacy Mixing**: Deposits committed to 32-level Merkle tree
-- **Unlinkability**: Transaction amounts and patterns hidden via proofs
-- **Scalability**: O(log n) proof size regardless of system scale
-- **Anonymity**: Zero-knowledge proofs prevent correlation analysis
+project/
+│
+├── circuits/
+│   ├── giftcard.circom
+│   ├── poseidon.circom
+│   ├── build/
+│   └── ptau/
+│
+├── contracts/
+│   ├── LambGiftPoolZK.sol
+│   ├── GiftCardVerifier.sol
+│
+├── frontend/
+│   └── public/zk/
+│       ├── giftcard.wasm
+│       ├── giftcard_final.zkey
+│       └── giftcard_verification_key.json
+│
+└── README.md
 
-### **💰 Partial Withdrawal with Balance Tracking**
-
-- **Dynamic Claims**: Withdraw any portion of deposited amount
-- **Spending History**: Circuit-enforced cumulative balance tracking
-- **Overdraft Prevention**: Range proofs ensure `spentAfter ≤ amountDeposited`
-- **Multi-use Support**: Cards can be partially redeemed over time
 
-### **🛡️ Enhanced Privacy Properties**
+🔧 Install Dependencies Circom 2.1+ git clone https://github.com/iden3/circom.git cd circom cargo build --release sudo
+cp target/release/circom /usr/local/bin/ circom --version
 
-- **Non-interactive Proofs**: No on-chain coordination required
-- **Forward Secrecy**: Future transactions don't reveal past activity
-- **Linkage Resistance**: Impossible to correlate deposits and withdrawals
+SnarkJS npm install -g snarkjs
 
-## 🏗️ Build Artifacts
+🧩 1. Compile the Circuit circom circuits/giftcard.circom --r1cs --wasm --sym -o circuits/build
 
-### **Compilation Output**
+Outputs:
 
-```bash
-# Active production circuit compilation
-circuits/build/
-├── giftcard_merkle.r1cs                     # Constraint system (~2,000+ constraints)
-├── giftcard_merkle.sym                      # Debug symbols
-├── giftcard_merkle_js/                      # WebAssembly witness generator
-│   ├── witness_calculator.js
-│   └── generate_witness.js
-├── giftcard_merkle_verification_key.json    # Generated verification key
-└── checksum_manifest.txt                    # Ceremony integrity proofs
-```
-
-### **Circuit Complexity**
-
-```bash
-$ snarkjs r1cs info circuits/build/giftcard_merkle.r1cs
-# Circuit Summary:
-# - 2,048+ constraints (Merkle tree verification)
-# - Poseidon hash operations: 32 levels + 3 auxiliary
-# - Range proof components: LessThan(128)
-```
-
-## 🔐 Active Trusted Setup Ceremony
-
-### **Phase 2 Status** ✅ **ACTIVE**
-
-- **Circuit**: `giftcard_merkle.circom` (primary production circuit)
-- **Ceremony Type**: Multi-party computation with decentralized verification
-- **Security Model**: Adversarial resilience with ≥1 honest participant guarantee
-
-### **Ceremony Infrastructure**
-
-- **Scripts**: [`../ceremony/scripts/`](../ceremony/scripts/) - Enhanced security tooling
-- **Contributions**: [`../ceremony/contrib/`](../ceremony/contrib/) - User entropy submissions
-- **Artifacts**: [`../ceremony/output/`](../ceremony/output/) - Verified ceremony chain
-- **Verification**: [`../ceremony/scripts/verify_chain.sh`](../ceremony/scripts/verify_chain.sh)
-
-### **GitHub Actions Orchestration**
-
-- **Validation**: Automated cryptographic verification of each contribution
-- **Aggregation**: Security-enhanced ceremony coordination
-- **Auditing**: 90-day artifact retention for compliance
-- **Loop Prevention**: Intelligent commit logic with exit codes
-
-## 📚 Technical Implementation
-
-### **Merkle Tree Structure**
-
-```circom
-// Leaf commitment: Poseidon(secret, salt, amountDeposited)
-component leafHash = Poseidon(3);
-leafHash.inputs[0] <== secret;
-leafHash.inputs[1] <== salt;
-leafHash.inputs[2] <== amountDeposited;
-leafCommitment <== leafHash.out;
-
-// 32-level Merkle proof verification
-signal hash[depth + 1];
-hash[0] <== leafCommitment;
-// ... 32 levels of hash verification
-root <== hash[depth];
-```
-
-### **Balance Management**
-
-```circom
-// Cumulative spending calculation
-spentAfter <== spentBefore + amountRequested;
-spentAfter_pub <== spentAfter;
-
-// Circuit-enforced boundary check
-component balanceCheck = LessThan(128);
-balanceCheck.in[0] <== spentAfter;
-balanceCheck.in[1] <== amountDepositedPlusOne;  // Strict inequality
-balanceCheck.out === 1;  // Must be true
-```
-
-### **Nullifier System**
-
-```circom
-// Amount-specific nullifiers prevent double-withdrawal
-component nullifierHash = Poseidon(2);
-nullifierHash.inputs[0] <== secret;
-nullifierHash.inputs[1] <== amountRequested;  // Binds to claim amount
-nullifierCurrent <== nullifierHash.out;
-```
-
-## 🚀 Development & Testing
-
-### **Compiling the Circuit**
+giftcard.r1cs
 
-```bash
-# Generate production-ready artifacts
-circom giftcard_merkle.circom --r1cs --wasm --sym -o ./build/
-
-# Validate circuit properties
-snarkjs r1cs info ./build/giftcard_merkle.r1cs
-```
+giftcard.wasm
 
-### **Testing Circuit Logic**
+giftcard.sym
 
-```bash
-# Generate test witness for development
-node -e "
-const input = {
-  secret: '12345',
-  salt: '67890',
-  amountDeposited: '1000',
-  amountRequested: '300',
-  spentBefore: '100',  // Already spent 100
-  pathElements: new Array(32).fill('0'),
-  pathIndices: new Array(32).fill('0')
-};
-// Test spending limit validation
-"
-```
+/giftcard_js/ (witness generator)
 
-### **Witness Generation**
+⚡ 2. Phase 1 — Powers of Tau mkdir -p circuits/ptau wget
+https://hermez.s3-eu-west-1.amazonaws.com/powersOfTau28_hez_final_12.ptau \
+ -O circuits/ptau/pot12_final.ptau
 
-```bash
-# Use compiled WebAssembly generator
-node ./build/giftcard_merkle_js/generate_witness.js \
-     ./build/giftcard_merkle_js/giftcard_merkle.wasm \
-     input.json \
-     witness.wtns
-```
+🔐 3. Phase 2 — Multi-Party Trusted Setup (3–5 people)
 
-## 🔧 Circuit Dependencies
+This ensures that no single person controls the proving key.
 
-- [**Circom 2.0+**](https://docs.circom.io/): Core ZK circuit compiler
-- [**Circomlib**](https://github.com/iden3/circomlib/): Cryptographic standard library
-  - `Poseidon(1/2/3)`: ZK-friendly hash functions
-  - `LessThan(128)`: Range proof component
-- [**SnarkJS**](https://github.com/iden3/snarkjs/): Ceremony and proof management
+Security model: If at least one participant destroys their toxic waste, the proving key is secure forever.
 
-## 🎯 Use Cases
+🔒 Ceremony Safety Checklist (All Participants)
 
-### **Production Applications**
+Before contributing, each participant should:
 
-- **Privacy-Preserving Gifts**: Anonymous token distribution
-- **Micropayment Channels**: Privacy-enabled payment networks
-- **Decentralized Finance**: Private DeFi primitives
-- **Healthcare Tokens**: Anonymous medical credit systems
-- **Voting Systems**: Private governance participation
+Use a clean machine or VM
 
-### **Advanced ZK Protocols**
+Disable terminal history:
 
-- **State Channels**: Privacy within payment networks
-- **Layer 2 Solutions**: Private transaction bundling
-- **Decentralized Identity**: Verifiable credentials with privacy
-- **Supply Chain Tracking**: Anonymous inventory management
+set +o history
 
-## 📄 Related Directories
+Use entropy generated by machine:
 
-- **[`../ceremony/`](../ceremony/)**: Active trusted setup ceremony infrastructure
-- **[`circomlib/`](./circomlib/)**: Cryptographic primitive library
-- **[`ptau/`](./ptau/)**: Phase 1 powers-of-tau ceremony artifacts
-- **[`../README.md`](../README.md)**: Project overview and participation guide
+openssl rand -hex 64
 
-## 🤝 Ceremony Participation
+Not livestream or record process
 
-### **Contributing to Trust Setup**
+Delete intermediate .zkey files after passing them forward
 
-```bash
-# Clone repository
-git clone https://github.com/your-org/lambda-zk.git
-cd lambda-zk/ceremony/scripts
+Shut down VM when finished
 
-# Add your entropy to the ceremony
-./contribute.sh
+✔️ Step 1 — Coordinator Creates Initial ZKey snarkjs groth16 setup \
+ circuits/build/giftcard.r1cs \
+ circuits/ptau/pot12_final.ptau \
+ circuits/build/giftcard_0000.zkey
 
-# Submit via pull request (GitHub Actions validation)
-```
+Coordinator publishes:
 
-### **Verification & Auditing**
+sha256sum circuits/build/giftcard_0000.zkey
 
-```bash
-# Independent ceremony verification
-./verify_chain.sh
+This ensures integrity before sending it to others.
 
-# Review audit logs
-ls -la ceremony_*.log
+✔️ Step 2 — Each Participant Contributes Entropy
 
-# Check checksum manifest
-cat ../ceremony/output/checksum_manifest.txt
-```
+Each participant receives a .zkey file and generates the next one.
 
-## 📜 Security Guarantees
+Example for Alice:
 
-- **🎲 Probabilistic Privacy**: Information-theoretically secure against < n/2 corrupt participants
-- **⏰ Forward Secrecy**: Future randomness doesn't compromise past secrecy
-- **🔒 Post-Quantum Resistance**: Security based on hash function assumptions
-- **⚖️ Balance Control**: Circuit-enforced spending limits prevent over-withdrawal
-- **🔍 Zero-Knowledge**: Only validity proven, no information leaked about secret values
+snarkjs zkey contribute \
+ circuits/build/giftcard_0000.zkey \
+ circuits/build/giftcard_0001.zkey \
+ --name="Alice" \
+ --entropy="$(openssl rand -hex 64)"
 
-## 🤝 Contributing
+Participants chain:
 
-### **Code Contributions**
+giftcard_0000.zkey → Alice → giftcard_0001.zkey giftcard_0001.zkey → Bob → giftcard_0002.zkey giftcard_0002.zkey → Carol
+→ giftcard_0003.zkey giftcard_0003.zkey → Dave → giftcard_final.zkey
 
-- **Circuit optimizations**: Reduce constraint count while maintaining security
-- **Security analysis**: Cryptographic review and formal verification
-- **Documentation**: Technical accuracy and clarity improvements
-- **Testing infrastructure**: Enhanced validation and edge case coverage
+🔍 Verify File Integrity Before Passing Forward
 
-### **Ceremony Participation**
+Each participant must compute the hash of their output file:
 
-- **Entropy contribution**: Strengthen the trusted setup by adding randomness
-- **Independent verification**: Audit ceremony results and security properties
-- **Documentation feedback**: Improve user guides and technical documentation
+sha256sum circuits/build/giftcard_0001.zkey
 
-## 📜 License
+…and send this hash + file to the next person.
 
-See [`../LICENSE`](../LICENSE) for project licensing terms.
+The next person must confirm:
 
----
+received file hash == sent hash
 
-**This circuit powers Lambda-ZK's production-grade privacy infrastructure.** The active trusted setup ceremony ensures this Merkle tree gift card system provides **enterprise-level cryptographic privacy** for decentralized applications. 🎯🔐
+This prevents tampering.
+
+🧨 How Participants Delete Toxic Waste
+
+After contribution:
+
+✔ Delete all old .zkey files:
+
+rm circuits/build/giftcard_0000\*.zkey
+
+✔ Clear shell history (if needed):
+
+history -c && history -w
+
+✔ Shut down VM or machine.
+
+Once shutdown occurs → RAM is wiped → toxic waste gone.
+
+✔️ Step 3 — Coordinator Verifies Ceremony snarkjs zkey verify \
+ circuits/build/giftcard.r1cs \
+ circuits/ptau/pot12_final.ptau \
+ circuits/build/giftcard_final.zkey
+
+Publish:
+
+sha256sum circuits/build/giftcard_final.zkey
+
+🧾 4. Export Verification Key snarkjs zkey export verificationkey \
+ circuits/build/giftcard_final.zkey \
+ circuits/build/giftcard_verification_key.json
+
+🏗️ 5. Generate Solidity Verifier snarkjs zkey export solidityverifier \
+ circuits/build/giftcard_final.zkey \
+ contracts/GiftCardVerifier.sol
+
+🧱 6. Deploy Smart Contracts
+
+Deploy GiftCardVerifier.sol
+
+Deploy LambGiftPoolZK.sol:
+
+constructor(address \_lambToken, address \_verifier)
+
+🧪 7. Frontend Proof Generation
+
+Place files in:
+
+frontend/public/zk/giftcard.wasm frontend/public/zk/giftcard_final.zkey
+frontend/public/zk/giftcard_verification_key.json
+
+Example Proof Generator import \* as snarkjs from "snarkjs"; import { poseidon } from "circomlibjs";
+
+export async function generateGiftProof(secret, amount) { const claimHash = poseidon([secret]); const nullifier =
+poseidon([secret, amount]);
+
+const input = { secret: secret.toString(), amount: amount.toString(), claimHash: claimHash.toString(), nullifier:
+nullifier.toString() };
+
+const { proof, publicSignals } = await snarkjs.groth16.fullProve( input, "/zk/giftcard.wasm", "/zk/giftcard_final.zkey"
+);
+
+return { proof, publicSignals }; }

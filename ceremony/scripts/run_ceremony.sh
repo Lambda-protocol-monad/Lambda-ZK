@@ -12,7 +12,9 @@ set -euo pipefail
 
 EXPECTED_PTAU_CHECKSUM="e970efa7774da80101e0ac336d083ef3339855c98112539338d706b2b89ac694"  # Verified PTAU checksum
 CIRCUIT_NAME="giftcard_merkle"
-LOG_FILE="ceremony_$(date +%Y%m%d_%H%M%S).log"
+LOG_DIR="ceremony/logs"
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/ceremony_$(date +%Y%m%d_%H%M%S).log"
 
 # -----------------------------------------------------------------------------
 # SECURITY FUNCTIONS
@@ -243,7 +245,7 @@ ZKEY0="$OUTPUT_DIR/${CIRCUIT_NAME}_0000.zkey"
 if [[ ! -f "$ZKEY0" ]]; then
     echo "$(date '+%Y-%m-%d %H:%M:%S') SETUP: Generating initial zkey with enhanced entropy validation"
     snarkjs groth16 setup "$R1CS_FILE" "$PTAU_FILE" "$ZKEY0"
-    sha256sum "$ZKEY0" > "$ZKEY0.sha256"
+    (cd "$OUTPUT_DIR" && sha256sum "$(basename "$ZKEY0")" > "$(basename "$ZKEY0").sha256")
 
     # Immediately validate the newly created initial zkey
     if ! validate_contribution "$ZKEY0" "$R1CS_FILE" "$PTAU_FILE" 0; then
@@ -337,7 +339,7 @@ for ((i=0; i<${#contrib_files[@]}; i++)); do
 
     # Copy validated contribution to official chain
     cp "$current_file" "$output_file"
-    sha256sum "$output_file" > "$checksum_file"
+    (cd "$OUTPUT_DIR" && sha256sum "$(basename "$output_file")" > "$(basename "$checksum_file")")
 
     # Verify the copied file integrity
     copied_checksum=$(sha256sum "$output_file" | awk '{print $1}')
