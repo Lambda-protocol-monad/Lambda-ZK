@@ -5,135 +5,124 @@ include "circomlib/circuits/comparators.circom";
 include "circomlib/circuits/babyjub.circom";
 
 /**
- * GiftCardMerkle(depth)
+ * GiftCardMerkleChaining(depth)
+ *
+ * UTXO-style commitment chaining with unlinkable partial withdrawals
  *
  * Private inputs:
- *  - secret
- *  - salt
- *  - amountDeposited
- *  - amountRequested
- *  - spentBefore
- *  - ephemeralPrivKey   (BabyJubJub private key)
- *  - pathElements[i]
- *  - pathIndices[i]
+ *  - oldSecret         // Secret for old commitment
+ *  - oldSalt           // Salt for old commitment
+ *  - oldAmount         // Total amount in old commitment
+ *  - withdrawAmount    // Amount to withdraw now
+ *  - newSecret         // Secret for new commitment (change)
+ *  - newSalt           // Salt for new commitment
+ *  - ephemeralPrivKey  // BabyJub private key for signature
+ *  - pathElements[depth]  // Merkle path for old commitment
+ *  - pathIndices[depth]   // Merkle path indices
  *
- * Public outputs (9):
- *  - root
- *  - nullifierCurrent         = Poseidon(secret, amountRequested)
- *  - amount                   = amountRequested
- *  - leafCommitment           = Poseidon(secret, salt, amountDeposited)
- *  - spentBefore_pub
- *  - spentAfter_pub           = spentBefore + amountRequested
- *  - amountDeposited_pub
- *  - ephPubKeyX               = BabyJub public key X from ephemeralPrivKey
- *  - ephPubKeyY               = BabyJub public key Y from ephemeralPrivKey
+ * Public outputs (6):
+ *  - root              // Merkle root
+ *  - nullifier         // Prevents reuse of old commitment
+ *  - withdrawAmount_pub // Amount being withdrawn
+ *  - newCommitment     // New commitment with change (0 if full withdraw)
+ *  - ephPubKeyX        // Ephemeral public key X
+ *  - ephPubKeyY        // Ephemeral public key Y
  */
 
 template GiftCardMerkle(depth) {
 
     // ----------- Private inputs -----------
 
-    signal input secret;
-    signal input salt;
-    signal input amountDeposited;
-    signal input amountRequested;
-    signal input spentBefore;
-
-    // BabyJubJub private key for the ephemeral recipient wallet
+    signal input oldSecret;
+    signal input oldSalt;
+    signal input oldAmount;
+    signal input withdrawAmount;
+    signal input newSecret;
+    signal input newSalt;
     signal input ephemeralPrivKey;
-
-    // Merkle path inputs for the commitment
     signal input pathElements[depth];
     signal input pathIndices[depth];
 
     // ----------- Public outputs -----------
 
-    // Merkle root of the tree
     signal output root;
-
-    // Nullifier for this claim: Poseidon(secret, amountRequested)
-    signal output nullifierCurrent;
-
-    // Public requested amount
-    signal output amount;
-
-    // Commitment leaf = Poseidon(secret, salt, amountDeposited)
-    signal output leafCommitment;
-
-    // Public view of spentBefore/spentAfter and deposited amount
-    signal output spentBefore_pub;
-    signal output spentAfter_pub;
-    signal output amountDeposited_pub;
-
-    // Ephemeral BabyJub public key (to be used by Solidity withdrawer)
+    signal output nullifier;
+    signal output withdrawAmount_pub;
+    signal output newCommitment;
     signal output ephPubKeyX;
     signal output ephPubKeyY;
 
-    // -----------------------------------------------
-    // BabyJubJub public key derivation
-    // -----------------------------------------------
-    // Derive BabyJub public key (Ax, Ay) from ephemeralPrivKey using BabyPbk()
+    // ----------- BabyJubJub ephemeral key -----------
+
     component eph = BabyPbk();
     eph.in <== ephemeralPrivKey;
-
-    // Expose public key coordinates as public outputs
     ephPubKeyX <== eph.Ax;
     ephPubKeyY <== eph.Ay;
 
-    // ----------- Mirror scalar values to public outputs -----------
+    // ----------- Output withdraw amount -----------
 
-    // Expose requested amount as a public signal
-    amount <== amountRequested;
+    withdrawAmount_pub <== withdrawAmount;
 
-    // Expose previous spent amount and total deposited as public
-    spentBefore_pub <== spentBefore;
-    amountDeposited_pub <== amountDeposited;
+    // ----------- Old commitment reconstruction -----------
+    // oldCommitment = Poseidon(oldSecret, oldSalt, oldAmount)
 
-    // ----------- Nullifier: Poseidon(secret, amountRequested) -----------
+    component oldCommitHash = Poseidon(3);
+    oldCommitHash.inputs[0] <== oldSecret;
+    oldCommitHash.inputs[1] <== oldSalt;
+    oldCommitHash.inputs[2] <== oldAmount;
+    signal oldCommitment;
+    oldCommitment <== oldCommitHash.out;
+
+    // ----------- Nullifier: Prevents old commitment reuse -----------
+    // nullifier = Poseidon(oldSecret, oldSalt)
+    // NOTE: Different from current circuit (was Poseidon(secret, amountRequested))
+    // This ensures each UTXO has unique nullifier
 
     component nullHash = Poseidon(2);
-    nullHash.inputs[0] <== secret;
-    nullHash.inputs[1] <== amountRequested;
-    nullifierCurrent <== nullHash.out;
+    nullHash.inputs[0] <== oldSecret;
+    nullHash.inputs[1] <== oldSalt;
+    nullifier <== nullHash.out;
 
-    // ----------- Spend tracking -----------
+    // ----------- Change amount calculation -----------
 
-    // Compute new spent amount: spentAfter = spentBefore + amountRequested
-    signal spentAfter;
-    spentAfter <== spentBefore + amountRequested;
-    spentAfter_pub <== spentAfter;
+    signal changeAmount;
+    changeAmount <== oldAmount - withdrawAmount;
 
-    // Enforce: spentAfter <= amountDeposited
-    // We do this by checking spentAfter < amountDeposited + 1
-    signal amountDepositedPlusOne;
-    amountDepositedPlusOne <== amountDeposited + 1;
+    // Enforce: withdrawAmount <= oldAmount
+    // (i.e., changeAmount >= 0)
+    component lessEq = LessThan(128);
+    lessEq.in[0] <== withdrawAmount;
+    lessEq.in[1] <== oldAmount + 1;
+    lessEq.out === 1;
 
-    component less = LessThan(128);
-    less.in[0] <== spentAfter;
-    less.in[1] <== amountDepositedPlusOne;
-    less.out === 1;
+    // ----------- New commitment (change) -----------
+    // If changeAmount = 0 (full withdraw), newCommitment should be 0
+    // If changeAmount > 0, newCommitment = Poseidon(newSecret, newSalt, changeAmount)
 
-    // ----------- Leaf commitment -----------
-    // leafCommitment = Poseidon(secret, salt, amountDeposited)
+    component newCommitHash = Poseidon(3);
+    newCommitHash.inputs[0] <== newSecret;
+    newCommitHash.inputs[1] <== newSalt;
+    newCommitHash.inputs[2] <== changeAmount;
 
-    component leafHash = Poseidon(3);
-    leafHash.inputs[0] <== secret;
-    leafHash.inputs[1] <== salt;
-    leafHash.inputs[2] <== amountDeposited;
-    leafCommitment <== leafHash.out;
+    // Use selector to output 0 if changeAmount = 0, otherwise hash
+    component isZero = IsZero();
+    isZero.in <== changeAmount;
 
-    // ----------- Merkle path reconstruction -----------
+    // If changeAmount = 0: newCommitment = 0
+    // If changeAmount > 0: newCommitment = newCommitHash.out
+    newCommitment <== (1 - isZero.out) * newCommitHash.out;
 
+    // ----------- Merkle proof for old commitment -----------
+
+    // Validate path indices are binary (0 or 1)
     var i;
-
-    // Ensure pathIndices are valid booleans (0 or 1)
     for (i = 0; i < depth; i++) {
         pathIndices[i] * (pathIndices[i] - 1) === 0;
     }
 
-    // hash[0] = leafCommitment; hash[i+1] = Poseidon(left[i], right[i])
+    // Reconstruct Merkle root from old commitment
     signal hash[depth + 1];
-    hash[0] <== leafCommitment;
+    hash[0] <== oldCommitment;
 
     signal left[depth];
     signal right[depth];
