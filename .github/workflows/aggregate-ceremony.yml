@@ -434,8 +434,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const prNumber = ${{ needs.aggregate.outputs.pr_number }};
-            🤖 Automated merge by Lambda-ZK Ceremony`
-            });
+
 
             // Merge the PR using PAT (bypasses branch protection)
             console.log('🔀 Merging PR...');
