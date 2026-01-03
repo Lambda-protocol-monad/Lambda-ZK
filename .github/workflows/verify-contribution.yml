@@ -498,36 +498,76 @@ jobs:
     steps:
       - name: Merge verified contribution
         uses: actions/github-script@v7
+        env:
+          BYPASS_TOKEN: ${{ secrets.BYPASS_TOKEN }}
         with:
-          github-token: ${{ secrets.BYPASS_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const prNumber = context.payload.pull_request.number;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const bypassToken = process.env.BYPASS_TOKEN;
 
             console.log('🔀 Attempting to merge PR...');
+            
+            // Helper to merge using specific token via fetch
+            async function mergeWithToken(token) {
+              const url = `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/merge`;
+              const response = await fetch(url, {
+                method: 'PUT',
+                headers: {
+                  'Authorization': `token ${token}`,
+                  'Accept': 'application/vnd.github.v3+json',
+                  'Content-Type': 'application/json',
+                  'User-Agent': 'actions/github-script'
+                },
+                body: JSON.stringify({
+                  merge_method: 'squash',
+                  commit_title: `Ceremony contribution #${prNumber}`,
+                  commit_message: `✅ Cryptographically verified contribution\n\nAutomated merge by Lambda-ZK Ceremony\n\nVerification Summary:\n- Cryptographic validation: PASSED\n- Security checks: PASSED\n- Parent zkey validation: PASSED\n- Rate limiting: PASSED\n\nWorkflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`
+                })
+              });
+              
+              if (!response.ok) {
+                const data = await response.json();
+                throw new Error(data.message || response.statusText);
+              }
+              return await response.json();
+            }
 
             try {
-              const mergeResult = await github.rest.pulls.merge({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: prNumber,
-                merge_method: 'squash',
-                commit_title: `Ceremony contribution #${prNumber}`,
-                commit_message: `✅ Cryptographically verified contribution
+              let merged = false;
+              let mergeData = null;
 
-            Automated merge by Lambda-ZK Ceremony
+              // 1. Try BYPASS_TOKEN if available
+              if (bypassToken) {
+                console.log('🔑 BYPASS_TOKEN detected. Attempting privileged merge...');
+                try {
+                  mergeData = await mergeWithToken(bypassToken);
+                  console.log('✅ PR merged successfully using BYPASS_TOKEN');
+                  merged = true;
+                } catch (bypassError) {
+                  console.log('⚠️ Merge with BYPASS_TOKEN failed:', bypassError.message);
+                  console.log('🔄 Falling back to GITHUB_TOKEN...');
+                }
+              }
 
-            Verification Summary:
-            - Cryptographic validation: PASSED
-            - Security checks: PASSED
-            - Parent zkey validation: PASSED
-            - Rate limiting: PASSED
+              // 2. Fallback to default GITHUB_TOKEN (via standard Octokit client) if not yet merged
+              if (!merged) {
+                const result = await github.rest.pulls.merge({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: prNumber,
+                  merge_method: 'squash',
+                  commit_title: `Ceremony contribution #${prNumber}`,
+                  commit_message: `✅ Cryptographically verified contribution\n\nAutomated merge by Lambda-ZK Ceremony\n\nVerification Summary:\n- Cryptographic validation: PASSED\n- Security checks: PASSED\n- Parent zkey validation: PASSED\n- Rate limiting: PASSED\n\nWorkflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`
+                });
+                mergeData = result.data;
+                console.log('✅ PR merged successfully using GITHUB_TOKEN');
+              }
 
-            Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`
-              });
-
-              console.log('✅ PR merged successfully');
-              console.log(`   SHA: ${mergeResult.data.sha}`);
-              console.log(`   Merged: ${mergeResult.data.merged}`);
+              console.log(`   SHA: ${mergeData.sha}`);
+              console.log(`   Merged: ${mergeData.merged}`);
 
               // Delete the branch (optional, for cleanup)
               try {
@@ -545,21 +585,12 @@ jobs:
               console.error('❌ Failed to merge PR:', mergeError.message);
 
               // Post a comment about the merge failure
+              // This call uses the default 'github' client which is now guaranteed to be GITHUB_TOKEN
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: prNumber,
-                body: `⚠️ **Automatic merge failed**
-
-            Your contribution has been **approved** and passed all security checks, but automatic merge failed.
-
-            **Error:** ${mergeError.message}
-
-            **Action Required:**
-            A repository maintainer needs to manually merge this PR.
-
-            ---
-            🤖 Automated verification by Lambda-ZK Ceremony`
+                body: `⚠️ **Automatic merge failed**\n\nYour contribution has been **approved** and passed all security checks, but automatic merge failed.\n\n**Error:** ${mergeError.message}\n\n**Action Required:**\nA repository maintainer needs to manually merge this PR.\n\n---\n🤖 Automated verification by Lambda-ZK Ceremony`
               });
 
               throw mergeError; // Fail the workflow

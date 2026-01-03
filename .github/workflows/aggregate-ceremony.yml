@@ -428,31 +428,12 @@ jobs:
     steps:
       - name: Merge aggregation PR
         uses: actions/github-script@v7
+        env:
+          BYPASS_TOKEN: ${{ secrets.BYPASS_TOKEN }}
         with:
-          github-token: ${{ secrets.BYPASS_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const prNumber = ${{ needs.aggregate.outputs.pr_number }};
-
-            console.log(`✅ Aggregation validation passed - merging PR #${prNumber}`);
-
-            // Post a comment explaining the merge (can't approve our own PR)
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: prNumber,
-              body: `✅ **Ceremony aggregation validated and merged**
-
-            **Validation Summary:**
-            - ✅ PTAU integrity verified
-            - ✅ R1CS validation passed
-            - ✅ Cryptographic verification via snarkjs
-            - ✅ Deterministic ordering maintained
-            - ✅ Checksum manifest generated
-
-            **Status:**
-            Waiting for verify check, then automatically merging...
-
-            ---
             🤖 Automated merge by Lambda-ZK Ceremony`
             });
 

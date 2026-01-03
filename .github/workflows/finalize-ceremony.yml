@@ -295,11 +295,75 @@ jobs:
     steps:
       - name: Merge finalization PR
         uses: actions/github-script@v7
+        env:
+          BYPASS_TOKEN: ${{ secrets.BYPASS_TOKEN }}
         with:
-          github-token: ${{ secrets.BYPASS_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const prNumber = ${{ needs.finalize.outputs.pr_number }};
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const bypassToken = process.env.BYPASS_TOKEN;
 
+            console.log('🔀 Attempting to merge Finalization PR...');
+
+            // Helper to merge using specific token via fetch
+            async function mergeWithToken(token) {
+              const url = `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/merge`;
+              const response = await fetch(url, {
+                method: 'PUT',
+                headers: {
+                  'Authorization': `token ${token}`,
+                  'Accept': 'application/vnd.github.v3+json',
+                  'Content-Type': 'application/json',
+                  'User-Agent': 'actions/github-script'
+                },
+                body: JSON.stringify({
+                  merge_method: 'squash',
+                  commit_title: `Ceremony Finalization`,
+                  commit_message: `✅ Ceremony Finalized\n\nAutomated merge by Lambda-ZK Ceremony`
+                })
+              });
+              
+              if (!response.ok) {
+                const data = await response.json();
+                throw new Error(data.message || response.statusText);
+              }
+              return await response.json();
+            }
+
+            try {
+              let merged = false;
+
+              // 1. Try BYPASS_TOKEN if available
+              if (bypassToken) {
+                console.log('🔑 BYPASS_TOKEN detected. Attempting privileged merge...');
+                try {
+                  await mergeWithToken(bypassToken);
+                  console.log('✅ PR merged successfully using BYPASS_TOKEN');
+                  merged = true;
+                } catch (bypassError) {
+                  console.log('⚠️ Merge with BYPASS_TOKEN failed:', bypassError.message);
+                  console.log('🔄 Falling back to GITHUB_TOKEN...');
+                }
+              }
+
+              // 2. Fallback to default GITHUB_TOKEN
+              if (!merged) {
+                await github.rest.pulls.merge({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: prNumber,
+                  merge_method: 'squash',
+                  commit_title: `Ceremony Finalization`,
+                  commit_message: `✅ Ceremony Finalized\n\nAutomated merge by Lambda-ZK Ceremony`
+                });
+                console.log('✅ PR merged successfully using GITHUB_TOKEN');
+              }
+            } catch (error) {
+              console.error('❌ Failed to merge finalization PR:', error.message);
+              throw error;
+            }
             console.log(`✅ Finalization validation passed - merging PR #${prNumber}`);
 
             // Post a comment explaining the merge
