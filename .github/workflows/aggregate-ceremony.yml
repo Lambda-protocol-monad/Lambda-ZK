@@ -433,8 +433,7 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const prNumber = ${{ needs.aggregate.outputs.pr_number }};
-
+            const prNumber = '${{ needs.aggregate.outputs.pr_number }}';
 
             // Merge the PR using PAT (bypasses branch protection)
             console.log('🔀 Merging PR...');
