@@ -48,7 +48,8 @@ fi
 
 # Sort and take last one (highest index)
 IFS=$'\n' sorted=($(printf '%s\n' "${zkeys[@]}" | sort))
-LAST_ZKEY="${sorted[-1]}"
+LAST_ZKEY="${sorted[${#sorted[@]}-1]}"
+unset IFS
 
 # Generate a temporary unique index using timestamp
 # The GitHub Actions workflow will renumber this to the correct sequential index
