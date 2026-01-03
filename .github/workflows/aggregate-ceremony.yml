@@ -429,7 +429,7 @@ jobs:
       - name: Merge aggregation PR
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.BYPASS_TOKEN }}
+          github-token: ${{ secrets.BYPASS_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
             const prNumber = ${{ needs.aggregate.outputs.pr_number }};
 
