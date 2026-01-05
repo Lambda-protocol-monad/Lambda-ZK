@@ -1,5 +1,5 @@
 LAMBDA-ZK Trusted Setup Checksum Manifest
-Generated: 2026-01-03T13:44:13+00:00
+Generated: 2026-01-05T09:03:27+00:00
 Circuit: giftcard_merkle
 Repository: https://github.com/lambda-zk/ceremony
 Security Assumption: At least one honest participant
@@ -9,4 +9,5 @@ PTAU: circuits/ptau/powersOfTau28_hez_final_18.ptau:e970efa7774da80101e0ac336d08
 R1CS: circuits/build/giftcard_merkle.r1cs:128c1121a3c6b624ce8221d4a12660c7075e1ed7af8dcc253b6322debee97717
 ZKEY: ceremony/output/giftcard_merkle_0000.zkey:a9fd293e0ead021d058632f4e5ae5489e580cdfc045ef8dd3109705416b1dcff
 ZKEY: ceremony/output/giftcard_merkle_0001.zkey:d79c4bb9da0ff231b6dc8c735aced637a7cdf6bdaf28456e5e98d8c64cbcccc0
-MANIFEST: ceremony/output/checksum_manifest.txt:9cfd5904b93f56f56f64f8ca0035cd1d23f2ed24659e615b3b254fe6bf0e538b
+ZKEY: ceremony/output/giftcard_merkle_0002.zkey:6b718fd12944d00666e024562ae687a09fb4049b8834ddba982285840a1cd9f4
+MANIFEST: ceremony/output/checksum_manifest.txt:b4935561a58eef4c4850b07d1f956b8c30ee8917157584b1f2140e0f551e8beb
