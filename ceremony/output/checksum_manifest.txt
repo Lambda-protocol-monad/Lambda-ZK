@@ -1,5 +1,5 @@
 LAMBDA-ZK Trusted Setup Checksum Manifest
-Generated: 2026-01-05T14:11:49.084814+00:00
+Generated: 2026-01-07T17:19:04+00:00
 Circuit: giftcard_merkle
 Repository: https://github.com/lambda-zk/ceremony
 Security Assumption: At least one honest participant
@@ -11,4 +11,8 @@ ZKEY: ceremony/output/giftcard_merkle_0000.zkey:a9fd293e0ead021d058632f4e5ae5489
 ZKEY: ceremony/output/giftcard_merkle_0001.zkey:d79c4bb9da0ff231b6dc8c735aced637a7cdf6bdaf28456e5e98d8c64cbcccc0
 ZKEY: ceremony/output/giftcard_merkle_0002.zkey:6b718fd12944d00666e024562ae687a09fb4049b8834ddba982285840a1cd9f4
 ZKEY: ceremony/output/giftcard_merkle_0003.zkey:6b718fd12944d00666e024562ae687a09fb4049b8834ddba982285840a1cd9f4
-MANIFEST: ceremony/output/checksum_manifest.txt:6253b4063c6fe204062eb3e7461adb0922f71333c5e5f3278b28c112d0ae5cb4
+ZKEY: ceremony/output/giftcard_merkle_0004.zkey:6b718fd12944d00666e024562ae687a09fb4049b8834ddba982285840a1cd9f4
+ZKEY: ceremony/output/giftcard_merkle_0005.zkey:6b718fd12944d00666e024562ae687a09fb4049b8834ddba982285840a1cd9f4
+ZKEY: ceremony/output/giftcard_merkle_0006.zkey:6b718fd12944d00666e024562ae687a09fb4049b8834ddba982285840a1cd9f4
+ZKEY: ceremony/output/giftcard_merkle_0007.zkey:dbd1523b988f115ca3d4546331af07c46e7a6d7bed2b284b5b17f3a083ee115a
+MANIFEST: ceremony/output/checksum_manifest.txt:649a8f5d5bd44b3a323af808097febf81d705abdbb74c46cfcbb28472d4d9f21
