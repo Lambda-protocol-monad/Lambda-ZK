@@ -24,57 +24,61 @@ Zero-Knowledge Giftcard Protocol with Merkle Privacy and Partial Withdrawals
 
 ## Overview
 
-This repository implements a **privacy-preserving giftcard system** using zero-knowledge proofs (ZK-SNARKs). The protocol allows users to:
+This repository implements a **privacy-preserving giftcard system** using zero-knowledge proofs (ZK-SNARKs) with **UTXO-style commitment chaining**. The protocol allows users to:
 
-- Deposit funds into privacy-preserving giftcard commitments
-- Make partial withdrawals without revealing the total balance
-- Prevent double-spending through cryptographic nullifiers
+- Deposit funds into privacy-preserving commitments stored in a Merkle tree
+- Make partial withdrawals with unlinkable change outputs (similar to Bitcoin UTXOs)
+- Prevent double-spending through unique cryptographic nullifiers
 - Generate ephemeral recipient addresses for each withdrawal
-- Prove membership in a Merkle tree without revealing position
+- Prove membership in a Merkle tree without revealing which commitment is being spent
 
 All while maintaining complete privacy and cryptographic security through Groth16 proofs.
 
 ## GiftCardMerkle Circuit
 
-The core of this system is the `GiftCardMerkle` circuit (circuits/giftcard_merkle.circom:1), a depth-32 Merkle tree-based privacy protocol that enables private giftcard withdrawals with spending constraints.
+The core of this system is the `GiftCardMerkle` circuit (circuits/giftcard_merkle.circom:1), a depth-32 Merkle tree-based privacy protocol implementing **UTXO-style commitment chaining** with unlinkable partial withdrawals.
 
 ### Circuit Architecture
 
 **Private Inputs:**
 
-- `secret`: User's secret value (never revealed)
-- `salt`: Randomization factor for commitment hiding
-- `amountDeposited`: Total giftcard balance
-- `amountRequested`: Current withdrawal amount
-- `spentBefore`: Previously spent amount
+- `oldSecret`: Secret for the commitment being spent
+- `oldSalt`: Salt for the old commitment
+- `oldAmount`: Total amount in the old commitment
+- `withdrawAmount`: Amount to withdraw in this transaction
+- `newSecret`: Secret for the new change commitment
+- `newSalt`: Salt for the new change commitment
 - `ephemeralPrivKey`: BabyJubJub private key for one-time recipient address
-- `pathElements[32]` / `pathIndices[32]`: Merkle proof of inclusion
+- `pathElements[32]` / `pathIndices[32]`: Merkle proof for old commitment
 
 **Public Outputs:**
 
 - `root`: Merkle tree root (validates membership)
-- `nullifierCurrent`: Unique nullifier `Poseidon(secret, amountRequested)` to prevent double-spending
-- `amount`: Withdrawal amount (public for verification)
-- `leafCommitment`: Giftcard commitment `Poseidon(secret, salt, amountDeposited)`
-- `spentBefore_pub` / `spentAfter_pub` / `amountDeposited_pub`: Spending tracking
+- `nullifier`: Unique nullifier `Poseidon(oldSecret, oldSalt)` to prevent commitment reuse
+- `withdrawAmount_pub`: Amount being withdrawn (public for verification)
+- `newCommitment`: New commitment with change `Poseidon(newSecret, newSalt, changeAmount)` (or 0 if full withdrawal)
 - `ephPubKeyX` / `ephPubKeyY`: BabyJubJub public key for ephemeral recipient
 
-### Protocol Flow
+### Protocol Flow (UTXO Model)
 
-1. **Deposit Phase**: User creates commitment `leafCommitment = Poseidon(secret, salt, amountDeposited)` and inserts into Merkle tree
-2. **Withdrawal Phase**: User generates ZK proof with:
-   - Merkle path proving commitment exists in tree
-   - Spending constraint verification: `spentBefore + amountRequested <= amountDeposited`
-   - Nullifier generation to prevent re-use
-   - Ephemeral public key derivation for withdrawal address
-3. **Verification**: Smart contract verifies proof and checks nullifier hasn't been used
+1. **Deposit Phase**: User creates initial commitment `Poseidon(secret, salt, amount)` and inserts into Merkle tree
+2. **Withdrawal Phase**: User generates ZK proof that:
+   - Proves old commitment exists in Merkle tree via inclusion proof
+   - Consumes old commitment by revealing unique nullifier `Poseidon(oldSecret, oldSalt)`
+   - Enforces spending constraint: `withdrawAmount <= oldAmount` (circuits/giftcard_merkle.circom:93)
+   - Creates new commitment with change: `changeAmount = oldAmount - withdrawAmount`
+   - Generates ephemeral public key for withdrawal recipient
+3. **Change Handling**:
+   - If `changeAmount > 0`: Creates new commitment with different secret/salt (unlinkable)
+   - If `changeAmount = 0`: Full withdrawal, `newCommitment = 0`
+4. **Verification**: Smart contract verifies proof, checks nullifier is unused, adds new commitment to tree
 
 ### Cryptographic Components
 
-- **Poseidon Hash**: ZK-friendly hash function for commitments, nullifiers, and Merkle tree (circuits/giftcard_merkle.circom:94,119,151)
-- **BabyJubJub**: Elliptic curve for ephemeral key generation (circuits/giftcard_merkle.circom:76)
-- **Merkle Tree**: Depth-32 tree with Poseidon hashing for commitment set anonymity (circuits/giftcard_merkle.circom:125)
-- **Spending Constraint**: Enforced via `LessThan(128)` comparator ensuring `spentAfter <= amountDeposited` (circuits/giftcard_merkle.circom:111)
+- **Poseidon Hash**: ZK-friendly hash function for commitments, nullifiers, and Merkle tree (circuits/giftcard_merkle.circom:69,81,102,140)
+- **BabyJubJub**: Elliptic curve for ephemeral key generation (circuits/giftcard_merkle.circom:57)
+- **Merkle Tree**: Depth-32 tree with Poseidon hashing for commitment set anonymity (circuits/giftcard_merkle.circom:117-162)
+- **Spending Constraint**: Enforced via `LessThan(128)` comparator ensuring `withdrawAmount <= oldAmount` (circuits/giftcard_merkle.circom:93)
 
 ## Trusted Setup Ceremony
 
@@ -115,7 +119,7 @@ This repository hosts an ongoing **Phase 2 trusted setup ceremony** to generate 
 
 ```
 ├── circuits/                    # ZK circuit implementations
-│   ├── giftcard_merkle.circom   # Main privacy giftcard circuit (depth-32 Merkle tree)
+│   ├── giftcard_merkle.circom   # Main UTXO-style privacy circuit (depth-32 Merkle tree)
 │   ├── poseidon.circom         # Poseidon hash function (ZK-friendly)
 │   └── test.circom             # Test circuits
 ├── circuits/build/             # Compiled circuit artifacts (.r1cs, .wasm, .sym)
@@ -123,6 +127,7 @@ This repository hosts an ongoing **Phase 2 trusted setup ceremony** to generate 
 ├── ceremony/
 │   ├── contrib/                # User entropy contributions (PR submissions)
 │   ├── output/                 # Official verified ceremony chain (proving keys)
+│   ├── logs/                   # Timestamped audit logs (90-day retention)
 │   └── scripts/
 │       ├── contribute.sh       # Generate and submit entropy contribution
 │       ├── run_ceremony.sh     # CI aggregation script with validation
@@ -219,8 +224,8 @@ cd ceremony/scripts
 # Verify complete ceremony chain
 ./verify_chain.sh
 
-# Review audit logs
-ls -la ceremony_*.log
+# Review audit logs (check both locations)
+ls -la ../logs/*.log ceremony_*.log 2>/dev/null
 
 # Check checksum manifest
 cat ../output/checksum_manifest.txt
@@ -236,12 +241,13 @@ cat ../output/checksum_manifest.txt
 - Audit trail consistency and temporal ordering
 
 **Audit Logs:**
-GitHub Actions generates timestamped audit artifacts containing:
+GitHub Actions generates timestamped audit artifacts stored in `ceremony/logs/` and `ceremony/scripts/` containing:
 
 - Cryptographic operation documentation (millisecond precision)
 - File validation results with rejection diagnostics
 - Manifest generation and verification status
 - Chain consistency proofs
+- 90-day artifact retention in GitHub Actions
 
 Example log entry:
 
@@ -257,16 +263,18 @@ Example log entry:
 
 **Privacy Guarantees:**
 
-- User's `secret` and `salt` never revealed on-chain
+- User's secrets (`oldSecret`, `newSecret`) and salts never revealed on-chain
 - Merkle tree hides which commitment is being spent (anonymity set of 2^32)
+- Change commitments use fresh `newSecret` and `newSalt`, making them unlinkable to old commitments
 - Ephemeral keys prevent address linkability between withdrawals
-- Nullifiers prevent double-spending without revealing secret
+- Nullifiers prevent commitment reuse without revealing secrets
 
 **Soundness Guarantees:**
 
-- Spending constraint enforced: `spentBefore + amountRequested <= amountDeposited` (circuits/giftcard_merkle.circom:106)
-- Merkle proof ensures commitment exists in tree (circuits/giftcard_merkle.circom:125)
-- Nullifier uniquely binds to withdrawal amount and secret
+- Spending constraint enforced: `withdrawAmount <= oldAmount` (circuits/giftcard_merkle.circom:93)
+- Merkle proof ensures old commitment exists in tree (circuits/giftcard_merkle.circom:117-162)
+- Nullifier `Poseidon(oldSecret, oldSalt)` uniquely identifies each UTXO, preventing double-spends
+- Change amount automatically calculated: `changeAmount = oldAmount - withdrawAmount`
 - BabyJubJub key derivation is cryptographically secure
 
 ### Ceremony Security
@@ -301,9 +309,10 @@ We welcome contributions from everyone! See [CONTRIBUTING.md](./CONTRIBUTING.md)
 
 The GiftCardMerkle circuit enables:
 
-- **Privacy-preserving giftcards**: Users can withdraw funds without revealing total balance
-- **Partial withdrawals**: Spend giftcards incrementally while maintaining privacy
-- **Anonymous payments**: Merkle tree provides anonymity set, nullifiers prevent double-spending
+- **Privacy-preserving giftcards**: Users can withdraw funds without revealing original balance or linking withdrawals
+- **UTXO-style partial withdrawals**: Spend giftcards incrementally with unlinkable change outputs
+- **Anonymous payments**: Merkle tree provides anonymity set of 2^32, nullifiers prevent double-spending
+- **Unlinkable change**: Each withdrawal creates a fresh commitment with new secrets, preventing transaction graph analysis
 - **Ephemeral recipients**: Each withdrawal generates new public key for enhanced privacy
 - **On-chain verification**: Smart contracts can verify withdrawals without learning sensitive data
 
@@ -311,9 +320,9 @@ The GiftCardMerkle circuit enables:
 
 **Circuit Statistics:**
 
-- Constraints: ~2,500 (estimated for depth-32 Merkle tree)
-- Public inputs: 9 (root, nullifier, amount, commitment, spending tracking, ephemeral pubkey)
-- Private inputs: 6 + 64 (secret, salt, amounts, ephemeralPrivKey, Merkle path)
+- Constraints: ~2,500 (estimated for depth-32 Merkle tree with UTXO chaining)
+- Public outputs: 6 (root, nullifier, withdrawAmount_pub, newCommitment, ephPubKeyX, ephPubKeyY)
+- Private inputs: 7 + 64 (oldSecret, oldSalt, oldAmount, withdrawAmount, newSecret, newSalt, ephemeralPrivKey, plus pathElements[32] and pathIndices[32])
 - Proving system: Groth16 (succinct proofs, fast verification)
 
 **Dependencies:**
