@@ -6,6 +6,7 @@ on:
     types: [opened, synchronize, reopened]
     paths:
       - 'ceremony/contrib/**/*.zkey'
+      - 'ceremony/output/**/*.zkey' # Also trigger for aggregation PRs
 
 permissions:
   contents: write # Required for merge
