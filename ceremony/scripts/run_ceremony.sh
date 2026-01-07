@@ -98,8 +98,9 @@ validate_contribution() {
         # Index validation is skipped - files will be renumbered sequentially when copied to output/
         local file_index=${BASH_REMATCH[1]}
         echo "$(date '+%Y-%m-%d %H:%M:%S') VALIDATION_INFO: Numbered file detected: $file_basename (will be renumbered to $(printf "%04d" "$expected_index") in output/)"
-    elif [[ "$file_basename" =~ ^giftcard_merkle_tmp_[0-9_]+\.zkey$ ]]; then
-        # Temporary format: skip index validation (will be renumbered)
+    elif [[ "$file_basename" =~ ^giftcard_merkle_tmp_[A-Za-z0-9._-]+\.zkey$ ]]; then
+        # Temporary format: allow numerical or descriptive suffixes (e.g. tmp_12345, tmp_12345_requeued)
+        # These will be renumbered into the official sequence when integrated into output/
         echo "$(date '+%Y-%m-%d %H:%M:%S') VALIDATION_INFO: Temporary file detected: $file_basename (will be renumbered to $(printf "%04d" "$expected_index") in output/)"
     else
         # Invalid format

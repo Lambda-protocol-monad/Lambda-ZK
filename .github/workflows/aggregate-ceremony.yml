@@ -4,7 +4,7 @@ on:
   # Run every 5 minutes to check for new contributions
   # For production, consider changing to hourly: '0 * * * *'
   schedule:
-    - cron: '0 * * * *'  # Every hour (production) - uncomment and comment above for production
+    - cron: '0 * * * *' # Every hour (production) - uncomment and comment above for production
 
   # Keep push trigger for immediate testing when scripts/circuits change
   push:
@@ -414,7 +414,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ceremony-audit-log-${{ github.run_id }}
-          path: ceremony/scripts/*.log
+          # Collect logs from both the new canonical logs directory and legacy scripts dir
+          path: |
+            ceremony/logs/*.log
+            ceremony/scripts/*.log
           retention-days: 90
 
   merge:
