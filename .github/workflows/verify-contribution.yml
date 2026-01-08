@@ -393,24 +393,27 @@ jobs:
             exit 0
           fi
 
-          echo "ℹ️  Applying rate limits for external contributor"
+          echo "ℹ️  Applying contribution limit for external contributor"
 
-          # Count merged PRs from this author in the last 24 hours
-          RECENT_CONTRIBS=$(gh pr list \
+          # Count ALL merged PRs from this author (lifetime contributions to ceremony)
+          # This ensures each participant can only contribute ONCE to maintain ceremony integrity
+          TOTAL_CONTRIBS=$(gh pr list \
             --repo ${{ github.repository }} \
             --author "$AUTHOR" \
             --state merged \
-            --search "merged:>$(date -u -d '24 hours ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v-24H '+%Y-%m-%dT%H:%M:%SZ')" \
             --json number \
             --jq 'length' || echo "0")
 
-          echo "Recent contributions (last 24h): $RECENT_CONTRIBS"
+          echo "Total contributions from $AUTHOR: $TOTAL_CONTRIBS"
 
-          if [ "$RECENT_CONTRIBS" -ge 20 ]; then
-            echo "❌ Rate limit exceeded: Maximum 5 contributions per 24 hours"
-            echo "   Please wait before submitting more contributions"
+          if [ "$TOTAL_CONTRIBS" -ge 1 ]; then
+            echo "❌ Contribution limit exceeded: Maximum 1 contribution per participant"
+            echo "   Each participant can only contribute once to the ceremony"
+            echo "   This maintains the cryptographic security properties of the trusted setup"
             exit 1
           fi
+
+          echo "✅ First contribution from this participant"
 
           # Check account age (must be > 7 days)
           ACCOUNT_CREATED=$(gh api /users/$AUTHOR --jq '.created_at')
@@ -447,7 +450,7 @@ jobs:
             **Cryptographic Verification:** PASSED ✓
             **Security Checks:** PASSED ✓
             **Parent Zkey Validation:** PASSED ✓
-            **Rate Limiting:** PASSED ✓
+            **Contribution Limit:** PASSED ✓
 
             ### Next Steps
             Auto-merge has been enabled for this PR. It will be **automatically merged** once all branch protection requirements are met.
@@ -484,7 +487,7 @@ jobs:
             - ✅ Cryptographic validation passed
             - ✅ Security checks passed
             - ✅ Parent zkey validation passed
-            - ✅ Rate limiting checks passed
+            - ✅ Contribution limit checks passed
 
             **Next Steps:**
             This PR will be automatically merged once all status checks complete.
@@ -512,7 +515,7 @@ jobs:
             ### Common issues:
             - **Cryptographic verification failed**: Ensure you used the latest zkey from \`ceremony/output/\` as input
             - **File validation failed**: Make sure you added exactly one \`.zkey\` file in \`ceremony/contrib/\`
-            - **Rate limit exceeded**: Maximum 5 contributions per 24 hours
+            - **Contribution limit exceeded**: Maximum 1 contribution per participant
             - **Account too new**: Account must be at least 7 days old
 
             ### How to fix:
@@ -558,7 +561,7 @@ jobs:
                 body: JSON.stringify({
                   merge_method: 'squash',
                   commit_title: `Ceremony contribution #${prNumber}`,
-                  commit_message: `✅ Cryptographically verified contribution\n\nAutomated merge by Lambda-ZK Ceremony\n\nVerification Summary:\n- Cryptographic validation: PASSED\n- Security checks: PASSED\n- Parent zkey validation: PASSED\n- Rate limiting: PASSED\n\nWorkflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`
+                  commit_message: `✅ Cryptographically verified contribution\n\nAutomated merge by Lambda-ZK Ceremony\n\nVerification Summary:\n- Cryptographic validation: PASSED\n- Security checks: PASSED\n- Parent zkey validation: PASSED\n- Contribution limit: PASSED\n\nWorkflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`
                 })
               });
               
@@ -594,7 +597,7 @@ jobs:
                   pull_number: prNumber,
                   merge_method: 'squash',
                   commit_title: `Ceremony contribution #${prNumber}`,
-                  commit_message: `✅ Cryptographically verified contribution\n\nAutomated merge by Lambda-ZK Ceremony\n\nVerification Summary:\n- Cryptographic validation: PASSED\n- Security checks: PASSED\n- Parent zkey validation: PASSED\n- Rate limiting: PASSED\n\nWorkflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`
+                  commit_message: `✅ Cryptographically verified contribution\n\nAutomated merge by Lambda-ZK Ceremony\n\nVerification Summary:\n- Cryptographic validation: PASSED\n- Security checks: PASSED\n- Parent zkey validation: PASSED\n- Contribution limit: PASSED\n\nWorkflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`
                 });
                 mergeData = result.data;
                 console.log('✅ PR merged successfully using GITHUB_TOKEN');

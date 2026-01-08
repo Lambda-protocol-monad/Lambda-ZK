@@ -47,7 +47,7 @@ The system automatically:
 A: Both work fine. System processes them in order.
 
 **Q: Can I contribute multiple times?**
-A: Yes! Max 5 per 24 hours.
+A: No. Each participant can only contribute once to the ceremony to maintain cryptographic security.
 
 **Q: My PR failed?**
 A: Check the error. Usually:
@@ -64,8 +64,8 @@ Every contribution is checked for:
 - Latest ceremony state
 - No malicious modifications
 
-**Rate limits:**
-- 5 contributions / 24 hours
+**Contribution limits:**
+- 1 contribution per participant (lifetime)
 - Account > 7 days old
 
 ---
