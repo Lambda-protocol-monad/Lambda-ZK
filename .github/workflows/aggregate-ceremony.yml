@@ -44,6 +44,7 @@ jobs:
           persist-credentials: true
 
       - name: Check if ceremony is already finalized
+        id: check_finalized
         shell: bash
         run: |
           set -euo pipefail
@@ -52,22 +53,21 @@ jobs:
 
           if [ -f "ceremony/output/giftcard_merkle_final.zkey" ]; then
             echo "ℹ️  CEREMONY ALREADY FINALIZED"
-            echo ""
-            echo "The ceremony has been finalized and no further aggregations are needed."
-            echo "Final artifacts are already present in ceremony/output/"
-            echo ""
-            echo "Exiting cleanly to prevent unnecessary processing."
+            echo "IS_FINALIZED=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
+          echo "IS_FINALIZED=false" >> "$GITHUB_OUTPUT"
           echo "✅ Ceremony is still open - proceeding with aggregation"
 
       - name: Setup Node.js
+        if: steps.check_finalized.outputs.IS_FINALIZED != 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
       - name: Install snarkjs with verification
+        if: steps.check_finalized.outputs.IS_FINALIZED != 'true'
         run: |
           echo "📦 Installing snarkjs for ceremony operations..."
           npm install -g snarkjs
@@ -81,12 +81,14 @@ jobs:
           echo "✅ snarkjs ready: $snarkjs_version"
 
       - name: Restore PTAU from cache
+        if: steps.check_finalized.outputs.IS_FINALIZED != 'true'
         uses: actions/cache@v4
         with:
           path: circuits/ptau/powersOfTau28_hez_final_18.ptau
           key: ptau-${{ runner.os }}-powersOfTau28_hez_final_18-v1
 
       - name: Secure PTAU provisioning
+        if: steps.check_finalized.outputs.IS_FINALIZED != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -127,6 +129,7 @@ jobs:
           fi
 
       - name: Install circom
+        if: steps.check_finalized.outputs.IS_FINALIZED != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -136,6 +139,7 @@ jobs:
           circom --version || true
 
       - name: Compile giftcard_merkle circuit
+        if: steps.check_finalized.outputs.IS_FINALIZED != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -143,6 +147,7 @@ jobs:
           circom circuits/giftcard_merkle.circom --r1cs --wasm -o circuits/build
 
       - name: Sync with latest ceremony state (prevent race conditions)
+        if: steps.check_finalized.outputs.IS_FINALIZED != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -170,6 +175,7 @@ jobs:
 
       - name: Check for contributions to process
         id: check_contributions
+        if: steps.check_finalized.outputs.IS_FINALIZED != 'true'
         shell: bash
         run: |
           set -euo pipefail
